@@ -3,6 +3,7 @@
 library(shiny)
 library(shinydashboard)
 library(dplyr)
+library(lazyeval) # reference t0 mutate_()
 library(ggplot2)
 library(DT)
 library(data.table)
@@ -13,112 +14,156 @@ library(umap)
 library(Rtsne)
 library(irlba)
 
+library(gganimate)
+
+
 
 server <- function(input,output,session) {
+
   filedata <- reactive({
-    if(input$useRdata=="TRUE") {
-      if(input$rdata=="iris") {
-        inputData <- iris
-      } else if(input$rdata=="mtcars") {
-        inputData <- mtcars
-      } else if(input$rdata=="diamonds") {
-        inputData <- diamonds 
-      } else if(input$rdata=="biopsy") {
-        inputData <- biopsy
-      } else if(input$rdata=="Melanoma") {
-        inputData <- Melanoma
-      } else if(input$rdata=="muscle") {
-        inputData <- muscle
-      } else if(input$rdata=="Pima.te") {
-        inputData <- Pima.te
-      } else if(input$rdata=="Boston") {
-        inputData <- Boston
-      }
-    }
-    else if (input$useRdata=="FALSE") {
+    #req(input$fileUpload)
     inputData <- input$fileUpload
     if (is.null(inputData))
-      return()
+      return(mtcars)
     inputData <- read.csv(inputData$datapath,header = TRUE)
-    }
-    
+
     if(input$limitcheck=="TRUE") {
       inputData <- head(inputData,input$limitnum)
     } else if(input$limitcheck=="FALSE") {
       inputData <- inputData
     }
     
-    if(input$impute=="Remove all NA rows") {
-      inputData <- na.omit(inputData)
-    } else if (input$impute!="Remove all NA rows") {
-      inputData <- inputData
-    }
+    # if(input$impute=="Remove all NA rows") {
+    #   inputData <- na.omit(inputData)
+    # } else if (input$impute!="Remove all NA rows") {
+    #   inputData <- inputData
+    # }
       
   })
   
 
   colswithna <- reactive({
-    df <- filedata()
-    
+    message('check nas')
+    df <- data_set()
+    if (ncol(df)==0) {return(NULL)}
+    ncc <- sum(complete.cases(df))
+    #browser()
+    if(ncc != nrow(df)) {
     df <- df %>% 
-      dplyr::select_if(function(x) any(is.na(x)))
-    
-    cols <- colnames(df)
-    
-    return(cols)
+      dplyr::select_if(function(x) any(is.na(x))) %>% 
+      summarise(across(everything(),~sum(is.na(.))))
+    df = as_tibble(t(df), rownames = "dimensions") 
+    df <- df %>% rename(countNA=V1) 
+    return(df)
+    } else {
+    return(NULL)
+    }
     
   })
-  
-  
+
+  # select variables for dimension reduction
   observe({
-    varX <- colnames(filedata())
-    #varX <- varX[!(varX %in% input$sampleyvars)]
-    updateSelectizeInput(session, "samplexvars", "Dimension Selection", choices = varX)
+    req(filedata())
+    #df <- select_if(filedata(),is.numeric)
+    df <- filedata()
+    filterVars <- colnames(df)
+    updateSelectizeInput(session, "filterVars", choices = c("None",filterVars))
   })
   
+  # observe choices in filter vars
+  observe({
+    fvar <- input$filterVars
+    # build filter levels
+    isolate(
+    df <- filedata()
+    )
+    filterLevels <- levels(as.factor(df[[as.character(fvar)]]))
+    # select column and put levels in choices
+    updateSelectizeInput(session, "filterLevels", "Filter", choices = filterLevels)
+  })
+    
+  # select variables for dimension reduction
+  observe({
+    req(filedata())
+    df <- select_if(filedata(),is.numeric)
+    varX <- colnames(df)
+    updateSelectizeInput(session, "samplexvars", "Select variables for dimension reduction", choices = varX)
+  })
+
+  # select variable for class or target  
   observe({
     varY <- colnames(filedata())
     varY <- varY[!(varY %in% input$samplexvars)]
-    updateSelectizeInput(session, "sampleyvars", "Add Data Class", choices = c("None",varY))
+    updateSelectizeInput(session, "sampleyvars", "Add Target Class", choices = varY) # selected = "None"
+  })
+  
+  # select variable for umap plotsize  
+  observe({
+    class <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
+    vars <- colnames(class)
+    #varY <- varY[!(varY %in% input$samplexvars)]
+    updateSelectizeInput(session, "umapsize", "Size", choices = c('default',vars)) # selected = "None"
   })
 
-  #cols <- reactive({
-  #  colnames(filedata())
+  
+  # select variable for umap plot color  
+  observe({
+    class <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
+    vars <- colnames(class)
+    #varY <- varY[!(varY %in% input$samplexvars)]
+    updateSelectizeInput(session, "umapcolor", "Color", choices = c('default',vars)) # selected = "None"
+  })
+  
+  # select wocos to follow  
+  observe({
+    df <- filtered_data_set()
+    if('corporatie' %in% names(df)) {
+    #class <- filtered_data_set() %>% dplyr::select('corporatie')
+    vars <- levels(as.factor(df[[as.character('corporatie')]]))
+    updateSelectizeInput(session, "tofollow", "Follow", choices = vars) # selected = "None"
+    } else {
+      updateSelectizeInput(session, "tofollow", "Follow", choices = c('none')) 
+    }
     
-  #})
+    message('follow')
+    
+  })
   
-  # output$dims <- renderUI({
-  #   data <- colnames(filedata())
-  #   choice <-  data
-  #   selectInput("dims","Dimension Selection", choices = choice, selected = choice[1])
-  # })
-  # 
-  # output$foo <- reactive({
-  # updateSelectizeInput(session, 'foo', choices = cols(), server = TRUE)
-  # })
-  # data_test <- reactive({
-  #   df <- filedata()
-  #   if(input$impute!="None" & input$impute!="Remove all NA rows") {
-  #     for (k in colnames(df)) {
-  #       if(input$impute=="Median") {
-  #         i <- median(df[[k]],na.rm = T)
-  #       } else if(input$impute=="Mean") {
-  #         i <- mean(df[[k]],na.rm = T)
-  #       } else if(input$impute=="0") {
-  #         i <- 0
-  #       }
-  #       set(x = df, which(is.na(df[[k]])), k, i)
-  #     }
-  #     #return(df)
-  #    }
-  # })
-  
-
-  data_set <- reactive({
+  # filtered_data_set
+  filtered_data_set <- reactive({
     df <- filedata()
+    
+    message(paste("rows start filtered data : ",nrow(df)))
+    
+    # apply filter
+    filterVar <- input$filterVars
+    filterLevels <- input$filterLevels
+    #message(paste("filterVar : ", class(filterVar)))
+    #message(paste("filterLevels : ",paste(filterLevels)))
+    
+    # only filter if at least one filter level is selected
+    if(!(filterVar == "")) {
+      if(!(filterVar == "None")){
+        df <- df %>% 
+          dplyr::mutate_(filterCol = interp(~as.factor(x), x=as.name(filterVar))) %>%
+          dplyr::filter(filterCol %in% filterLevels)
+      }
+    }
+    return(df)
+  })
+  
+  
+  # dataset for feature reduction
+  # numeric only
+  data_set <- reactive({
+    df <- filtered_data_set()
+    # select columns for data reduction
     df <- df %>%
       dplyr::select(input$samplexvars)
     
+    message(paste("rows in data_set : ",nrow(df)))
+    
+    # impute missings
     if(input$impute!="None" & input$impute!="Remove all NA rows") {
       for (k in colnames(df)) {
         if(input$impute=="Impute with Median") {
@@ -133,33 +178,6 @@ server <- function(input,output,session) {
     }
     
 
-    if(input$fun!="None") {
-      if(input$fun=="abs(x)") {
-        df <- abs(df)
-      } else if(input$fun=="ceiling(x)") {
-        df <- ceiling(df)
-      } else if(input$fun=="cos(x)") {
-        df <- cos(df)
-      } else if(input$fun=="exp(x)") {
-        df <- exp(df)
-      } else if(input$fun=="floor(x)") {
-        df <- floor(df)
-      } else if(input$fun=="log(x)") {
-        df <- log(df)
-      } else if(input$fun=="log10(x)") {
-        df <- log10(df)
-      } else if(input$fun=="sin(x)") {
-        df <- sin(df)
-      } else if(input$fun=="sqrt(x)") {
-        df <- sqrt(df)
-      } else if(input$fun=="trunc(x)") {
-        df <- trunc(df)
-      } else if(input$fun=="tan(x)") {
-        df <- tan(df)
-      }
-      
-    }
-    
     if(input$scale!="None") {
       if(input$scale=="center = TRUE & scale = TRUE") {
         df <- data.frame(scale(df,center = TRUE,scale = TRUE))
@@ -177,6 +195,7 @@ server <- function(input,output,session) {
     return(df)
   })
   
+  # summary processed dataset
   summpro <- reactive({
     df <- data_set()
     df <- gather(df,
@@ -192,8 +211,24 @@ server <- function(input,output,session) {
     df <- cbind(data.frame(df_sum),data.frame(df_na)[,2])
     colnames(df)[7] <- "Has NAs"
 
-
     return(df)
+  })
+  
+  # pre view dataset
+  preview <- reactive({
+    req(input$dview)
+    if(input$dview == "Pre-processed Dataset") {
+      dt_view = filedata()
+    } else if(input$dview == "Processed Dataset" & is.null(input$sampleyvars)) {
+      dt_view <- data_set()
+    } else if(input$dview == "Processed Dataset" & input$sampleyvars!="") {
+      dt_view = data_set()
+      class <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
+      dt_view <- cbind(dt_view,class)
+    } else if(input$dview=="Summary") {
+      dt_view = summpro()
+    }
+    as.data.table(dt_view)
   })
 
   
@@ -219,7 +254,12 @@ server <- function(input,output,session) {
   
 
  
-  umap_class_df <- eventReactive(input$umapseed,{
+  umap_class_df <- eventReactive({
+    input$umapseed
+    input$animate
+    1
+  },{
+    message('start data processing')
     df_input <- filedata()
     df <- data_set()
     seedrand <- as.integer(seedrandumap())
@@ -250,318 +290,99 @@ server <- function(input,output,session) {
     
     df_umap <- umap(df,config=custom.settings)
     
-    class <- filedata() 
-    
-    if(input$sampleyvars=="None") {
-      class <- class %>% mutate(class="None") %>% dplyr::select(class)
-    } else if(input$sampleyvars!="None") {
-      class <- class %>% dplyr::select(input$sampleyvars)
+    if(is.null(input$sampleyvars)) {
+      #class <- class %>% mutate(class="None") %>% dplyr::select(class)
+      df_umap_class <- data.frame(df_umap$layout)
+      names(df_umap_class) <- c("x", "y")
+    } else {
+      classvars <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
+      df_umap_class <- data.frame(cbind(df_umap$layout,classvars))
+      names(df_umap_class) <- c("x", "y",input$sampleyvars)
     }
     
-    
-    
-    df_umap_class <- data.frame(cbind(df_umap$layout,class))
-    names(df_umap_class) <- c("x", "y","class")
     return(df_umap_class)
   })
   
   
+  ### umap plot
+  output$umap_plot = renderPlotly({
+    df_umap_class <- umap_class_df()
+  
+    n <- nrow(df_umap_class)
+    
+    # set color
+    if(input$umapcolor=="default"){
+      df_umap_class$color <- 'blue'
+      umapcolor='color'
+    } else {
+      umapcolor=input$umapcolor
+    }
+    
+    # set size
+    if(input$umapsize=="default"){
+      df_umap_class$size <- 1
+      umapsize='size'
+    } else {
+      umapsize=input$umapsize
+    }
 
-  umap_clus_df <- eventReactive(input$umapseed,{
+    umap_plot <- NULL
+    
+    umap_plot <- ggplot(df_umap_class, aes(x, y)) + 
+      geom_point(aes_string(colour = umapcolor,
+                     size = umapsize, alpha=0.6)) +
+      scale_size(name=umapsize) + #range = c(.1, 24),
+      labs(title = "UMAP Dimension Reduction",
+           x = 'X',
+           y = 'Y',
+           caption="powered by DIKW Academy")
+    
+
+    # add or remove legend
+    if(input$showlegend=='FALSE') {
+      umap_plot <- umap_plot + 
+        theme(legend.position = "none")
+    } else {
+      umap_plot <- umap_plot +
+        theme(legend.key = element_blank(),
+              legend.text =element_text(size = 10),
+              legend.position = "right",
+              legend.direction = "vertical")
+    }
+
+    return(ggplotly(umap_plot))
+  }
+  )
+
+  ### animate plot
+  output$animate_plot = renderPlot({
     df <- umap_class_df()
+    message('start making plot')
+    n <- nrow(df)
     
-    seedrand <- as.integer(seedrandumap())
+    if ("jaar" %in% colnames(df)) {
     
-    set.seed(seedrand)
+    aplot <- ggplot(df, 
+                aes(x=x, y=y, colour=corporatie)) +
+      geom_text(data = df,aes(x=0,y=0, label=as.character(jaar)), size=50, colour='white',show.legend = FALSE) +
+      geom_point(show.legend = FALSE, alpha= 0.7)  +
+      geom_label(data = subset(df,corporatie %in% input$tofollow),
+                 aes(label=corporatie),
+                 show.legend = FALSE) + 
+      labs(title = "AEDES Benchmark 2018 - 2021",
+           subtitle = "UMAP embedding van geselecteerde Benchmark detail informatie in 2D",
+           caption = "powered by DIKW Academy") +
+      transition_states(jaar, transition_length = 4, state_length=1, wrap=FALSE) 
+
     
-    clusters <- kmeans(df[,1:2],input$n_clusters,iter.max = input$iter_max, nstart = input$nstart, algorithm = input$kmeansalg)
-    clusters <- clusters$cluster
-    return(clusters)
+    return(aplot)
+    } else {
+      return()
+    }
+    
   })
-
-
-  umap_class_clus_df <-eventReactive(input$umapseed,{
-    umap_class_df <- umap_class_df()
-    umap_clus_df <- umap_clus_df()
-      df_umap_class_clus <- cbind(umap_class_df,umap_clus_df)
-    return(df_umap_class_clus)
-  })
-
-  umap_clus_cent_df <- eventReactive(input$umapseed,{
-    umap_class_df <- umap_class_df()
-    
-    seedrand <- as.integer(seedrandumap())
-    
-    set.seed(seedrand)
-    
-    clusters <- kmeans(umap_class_df[,1:2],input$n_clusters,iter.max = input$iter_max, nstart = input$nstart, algorithm = input$kmeansalg)
-    umap_clus_cent <- data.frame(clusters$centers)
-    umap_clus_cent <- rowid_to_column(umap_clus_cent,var = "cluster")
-    return(umap_clus_cent)
-  })
-  
-  dataWithUMAPClusters <- eventReactive(input$umapseed,{
-    data <- data_set()
-    class <- filedata()
-    if(input$sampleyvars=="None") {
-      class <- data.frame("None")
-      colnames(class) <- c("Class")
-    } else if(input$sampleyvars!="None") {
-      class <- class %>% dplyr::select(input$sampleyvars)
-    }
-    clus <- umap_class_clus_df()
-    data <- cbind(data,class,clus$umap_clus_df)
-    names(data)[names(data) == "clus$umap_clus_df"] <- "ClusterID"
-    return(data)
-  })
-
-### umap plot
-
-  output$umapplot = renderPlot({
-    df_umap_class_clus <- umap_class_clus_df()
-
-    df_umap_class_clus$x <- as.numeric(as.character(df_umap_class_clus$x))
-    df_umap_class_clus$y <- as.numeric(as.character(df_umap_class_clus$y))
-    
-    n <- nrow(df_umap_class_clus)
-
-    umap_clus_cent <- umap_clus_cent_df()
-
-    umap_plot <- NULL
-
-    umap_plot <- ggplot(df_umap_class_clus, aes(x, y))
-    
-      if((is.numeric(df_umap_class_clus$class) & input$classnum=="TRUE") | !is.numeric(df_umap_class_clus$class)) {
-        umap_plot <- umap_plot + geom_point(aes(colour = factor(class)))
-      } else if(is.numeric(df_umap_class_clus$class) & input$classnum=="FALSE") {
-        umap_plot <- umap_plot + geom_point(aes(colour = class))
-      }
-      
-    umap_plot <- umap_plot + labs(x ="X", y = "Y",colour=input$sampleyvars)
-
-    if(input$custmumaptitlecheck=="FALSE") {
-      umap_plot <- umap_plot + ggtitle("UMAP Dimension Reduction")
-    } else if(input$custmumaptitlecheck=="TRUE") {
-      umap_plot <- umap_plot + ggtitle(paste0(input$custmumaptitle))
-    }
-       
-    
-    if(input$umapcluslabels=="TRUE") {
-      umap_plot <- umap_plot + 
-        geom_point(data=umap_clus_cent, aes(x,y)) +
-        geom_text(data=umap_clus_cent, aes(label=cluster),hjust=0, vjust=0, size=6)
-    }
-      
-    if(input$uxaxisbounds=="TRUE") {
-      umap_plot <- umap_plot + xlim(input$uxmin,input$uxmax) #xlim(-20,15) #xlim(input$uxmin,input$uxmax)
-    }
-    
-    if(input$uyaxisbounds=="TRUE") {
-      umap_plot <- umap_plot + ylim(input$uymin,input$uymax)
-    }
-      
-    
-    if(is.numeric(df_umap_class_clus$class) & input$classnum=="FALSE") {
-      umap_plot <- umap_plot + scale_colour_gradientn(colours = terrain.colors(12))
-    }
-
-    umap_plot <- umap_plot +
-      theme(axis.text.x=element_text(size = 10),
-            axis.text.y=element_text(size = 10),
-            axis.title.x=element_text(size = 10),
-            axis.title.y=element_text(size = 10),
-            legend.key = element_blank(),
-            legend.text =element_text(size = 10),
-            legend.position = "right",
-            legend.direction = "vertical",
-            panel.background = element_rect(fill = "white"),
-            panel.border = element_rect(linetype = "solid", fill=NA, colour = "black"),
-            panel.grid.major = element_line(colour = "lightgrey",size=0.2),
-            plot.title = element_text(color="black", size=15, face="bold",hjust = 0.5),
-            plot.margin = unit(c(0.5,0.5,0.5,0.5), "lines"))
-
-    return(umap_plot)
-  }
-  )
-  
-### UMAP plot for printing
-  
-  umapplotoutput = reactive({
-    df_umap_class_clus <- umap_class_clus_df()
-    
-    df_umap_class_clus$x <- as.numeric(as.character(df_umap_class_clus$x))
-    df_umap_class_clus$y <- as.numeric(as.character(df_umap_class_clus$y))
-    
-    n <- nrow(df_umap_class_clus)
-    
-    umap_clus_cent <- umap_clus_cent_df()
-    umap_plot <- NULL
-    
-    umap_plot <- ggplot(df_umap_class_clus, aes(x, y))
-    
-    if((is.numeric(df_umap_class_clus$class) & input$classnum=="TRUE") | !is.numeric(df_umap_class_clus$class)) {
-      umap_plot <- umap_plot + geom_point(aes(colour = factor(class)))
-    } else if(is.numeric(df_umap_class_clus$class) & input$classnum=="FALSE") {
-      umap_plot <- umap_plot + geom_point(aes(colour = class))
-    }
-    
-    umap_plot <- umap_plot + labs(x ="X", y = "Y",colour=input$sampleyvars)
-  
-    if(input$custmumaptitlecheck=="FALSE") {
-      umap_plot <- umap_plot + ggtitle("UMAP Dimension Reduction")
-    } else if(input$custmumaptitlecheck=="TRUE") {
-      umap_plot <- umap_plot + ggtitle(paste0(input$custmumaptitle))
-    }
     
     
-    if(input$umapcluslabels=="TRUE") {
-      umap_plot <- umap_plot + 
-        geom_point(data=umap_clus_cent, aes(x,y)) +
-        geom_text(data=umap_clus_cent, aes(label=cluster),hjust=0, vjust=0, size=6)
-    }
-    
-    if(input$uxaxisbounds=="TRUE") {
-      umap_plot <- umap_plot + xlim(input$uxmin,input$uxmax) #xlim(-20,15) #xlim(input$uxmin,input$uxmax)
-    }
-    
-    if(input$uyaxisbounds=="TRUE") {
-      umap_plot <- umap_plot + ylim(input$uymin,input$uymax)
-    }
-    
-    
-    
-    if(is.numeric(df_umap_class_clus$class) & input$classnum=="FALSE") {
-      umap_plot <- umap_plot + scale_colour_gradientn(colours = terrain.colors(12))
-    }
-    
-    umap_plot <- umap_plot +
-      theme(axis.text.x=element_text(size = 10),
-            axis.text.y=element_text(size = 10),
-            axis.title.x=element_text(size = 10),
-            axis.title.y=element_text(size = 10),
-            legend.key = element_blank(),
-            legend.text =element_text(size = 10),
-            legend.position = "right",
-            legend.direction = "vertical",
-            panel.background = element_rect(fill = "white"),
-            panel.border = element_rect(linetype = "solid", fill=NA, colour = "black"),
-            panel.grid.major = element_line(colour = "lightgrey",size=0.2),
-            plot.title = element_text(color="black", size=15, face="bold",hjust = 0.5),
-            plot.margin = unit(c(0.5,0.5,0.5,0.5), "lines"))
-    
-    return(umap_plot)
-  }
-  )
-
-### umap cluster
-  
-  output$umapcluster = renderPlot({
-    df_umap_class_clus <- umap_class_clus_df()
-
-    df_umap_class_clus$x <- as.numeric(as.character(df_umap_class_clus$x))
-    df_umap_class_clus$y <- as.numeric(as.character(df_umap_class_clus$y))
-
-    umap_clus_cent <- umap_clus_cent_df()
-    
-    umap_clus <- NULL
-
-    umap_clus <- ggplot(df_umap_class_clus, aes(x, y)) +
-      geom_point(aes(colour = factor(umap_clus_df))) +
-      labs(x ="X", y = "Y",colour="Cluster")
-    
-    if(input$uxaxisbounds=="TRUE") {
-      umap_clus <- umap_clus + xlim(input$uxmin,input$uxmax) #xlim(-20,15) #xlim(input$uxmin,input$uxmax)
-    }
-    
-    if(input$uyaxisbounds=="TRUE") {
-      umap_clus <- umap_clus + ylim(input$uymin,input$uymax)
-    }
-      
-      if(input$custmumapclustitlecheck=="FALSE") {
-        umap_clus <- umap_clus + ggtitle("UMAP Dimension Reduction with KMeans Clusters")
-      } else if(input$custmumapclustitlecheck=="TRUE") {
-        umap_clus <- umap_clus + ggtitle(paste0(input$custmumapclustitle))
-      }
-      
-    if(input$umapcluslabels=="TRUE") {
-      umap_clus <- umap_clus + 
-        geom_point(data=umap_clus_cent, aes(x,y)) +
-        geom_text(data=umap_clus_cent, aes(label=cluster),hjust=0, vjust=0, size=6)
-    }
-
-    umap_clus <- umap_clus +
-      theme(axis.text.x=element_text(size = 10),
-            axis.text.y=element_text(size = 10),
-            axis.title.x=element_text(size = 10),
-            axis.title.y=element_text(size = 10),
-            legend.key = element_blank(),
-            legend.text =element_text(size = 10),
-            legend.position = "right",
-            legend.direction = "vertical",
-            panel.background = element_rect(fill = "white"),
-            panel.border = element_rect(linetype = "solid", fill=NA, colour = "black"),
-            panel.grid.major = element_line(colour = "lightgrey",size=0.2),
-            plot.title = element_text(color="black", size=15, face="bold",hjust = 0.5),
-            plot.margin = unit(c(0.5,0.5,0.5,0.5), "lines"))
-
-    return(umap_clus)
-  }
-  )
-  
-#### UMAP cluster for printing
-  
-  umapclusplotoutput = reactive({
-    df_umap_class_clus <- umap_class_clus_df()
-    
-    df_umap_class_clus$x <- as.numeric(as.character(df_umap_class_clus$x))
-    df_umap_class_clus$y <- as.numeric(as.character(df_umap_class_clus$y))
-    
-    umap_clus_cent <- umap_clus_cent_df()
-  
-    umap_clus <- NULL
-    
-    umap_clus <- ggplot(df_umap_class_clus, aes(x, y)) +
-      geom_point(aes(colour = factor(umap_clus_df))) +
-      labs(x ="X", y = "Y",colour="Cluster")
-    
-    if(input$uxaxisbounds=="TRUE") {
-      umap_clus <- umap_clus + xlim(input$uxmin,input$uxmax) #xlim(-20,15) #xlim(input$uxmin,input$uxmax)
-    }
-    
-    if(input$uyaxisbounds=="TRUE") {
-      umap_clus <- umap_clus + ylim(input$uymin,input$uymax)
-    }
-    
-    if(input$custmumapclustitlecheck=="FALSE") {
-      umap_clus <- umap_clus + ggtitle("UMAP Dimension Reduction with KMeans Clusters")
-    } else if(input$custmumapclustitlecheck=="TRUE") {
-      umap_clus <- umap_clus + ggtitle(paste0(input$custmumapclustitle))
-    }
-    
-    if(input$umapcluslabels=="TRUE") {
-      umap_clus <- umap_clus + 
-        geom_point(data=umap_clus_cent, aes(x,y)) +
-        geom_text(data=umap_clus_cent, aes(label=cluster),hjust=0, vjust=0, size=6)
-    }
-    
-    umap_clus <- umap_clus +
-      theme(axis.text.x=element_text(size = 10),
-            axis.text.y=element_text(size = 10),
-            axis.title.x=element_text(size = 10),
-            axis.title.y=element_text(size = 10),
-            legend.key = element_blank(),
-            legend.text =element_text(size = 10),
-            legend.position = "right",
-            legend.direction = "vertical",
-            panel.background = element_rect(fill = "white"),
-            panel.border = element_rect(linetype = "solid", fill=NA, colour = "black"),
-            panel.grid.major = element_line(colour = "lightgrey",size=0.2),
-            plot.title = element_text(color="black", size=15, face="bold",hjust = 0.5),
-            plot.margin = unit(c(0.5,0.5,0.5,0.5), "lines"))
-    
-    return(umap_clus)
-  })
-
 #################### t-sne #######################################
   
   
@@ -596,7 +417,8 @@ server <- function(input,output,session) {
                 exaggeration_factor = input$exaggeration_factor, 
                 num_threads = input$num_threads)
     
-    class <- filedata() 
+    #class <- filedata() 
+    class <- filtered_data_set()
     
     if(input$sampleyvars=="None") {
       class <- class %>% mutate(class="None") %>% dplyr::select(class)
@@ -933,28 +755,22 @@ server <- function(input,output,session) {
 #################### data table ##################################    
   
   output$data <- DT::renderDataTable(
-    DT::datatable(
-      if(input$dview == "Pre-processed Dataset") {
-      data = filedata()
-      } else if(input$dview == "Processed Dataset" & input$sampleyvars!="None") {
-        data <- data_set()
-        class <- filedata()
-        class <- class %>% dplyr::select(input$sampleyvars)
-        data <- cbind(data,class)
-      } else if(input$dview == "Processed Dataset" & input$sampleyvars=="None") {
-        data = data_set()
-      } else if(input$dview=="Summary") {
-        data = summpro()
-      },options = list(pageLength = 100,scrollX = TRUE),
+    DT::datatable({
+      data = preview()
+    }
+      ,options = list(pageLength = 100,scrollX = TRUE),
                   rownames = FALSE)
 
   )
   
-  output$nrow <- renderPrint({
-      data <- nrow(filedata())
-      data <- data.frame(data)
-      colnames(data) <- c("No. Observations")
-      print(data)
+  output$nrowFiledata <- renderText({
+    n <- nrow(filedata())
+    paste('Observations in original data file : ',n)
+  })
+
+  output$nrowDataset <- renderText({
+    n <- nrow(data_set())
+    paste('Observations in dataset : ',n)
   })
   
   output$printuseed <- renderPrint({
@@ -963,26 +779,22 @@ server <- function(input,output,session) {
     print(data)
   })
   
-  output$printtseed <- renderPrint({
+  output$printtseed <- renderText({
     data <- data.frame(seedrandtsne())
     colnames(data) <- c("Current Seed")
-    print(data)
+    return(data)
   })
   
-  output$renderprint <- renderPrint({
-    na <- data.frame(colswithna())
-    nrow(na)
-    nona <- data.frame("None")
-    
-    if(nrow(na)>0) {
-      colnames(na) <- c("Columns with missing values")
-      print(na)
+  output$renderNA <- renderTable({
+    cna <- colswithna()
+    if(!is.null(cna)) {
+      cna
     }
-    else if(nrow(na)<1) {
-      colnames(nona) <- c("Columns with missing values")
-      print(nona)
+    else {
+      data.frame("Missing data" = "No missing data")
+      
     }
-    
+
   })
   
   output$dataview.csv <- downloadHandler(
@@ -1004,10 +816,9 @@ server <- function(input,output,session) {
     }
   )
   
-  
   output$umap <- DT::renderDataTable(
     DT::datatable(
-        data = dataWithUMAPClusters()
+        data = umap_class_df()
         ,options = list(pageLength = 100,scrollX = TRUE),
       rownames = FALSE)
     
@@ -1024,42 +835,14 @@ server <- function(input,output,session) {
   output$umapdata.csv <- downloadHandler(
     filename = function(){"umapdata.csv"},
     content = function(fname){
-        write.csv(dataWithUMAPClusters(), fname,row.names = FALSE)
+        write.csv(umap_class_df(), fname, row.names = FALSE)
       }
-  )
-  
-  output$umapplot.png <- downloadHandler(
-    filename = function() { paste("UMAPPlot", ".png", sep='') },
-    content = function(file) {
-      ggsave(file, plot = umapplotoutput(), device = "png",width = 20, height = 20, units = "cm")
-    }
-  )
-  
-  output$umapclusplot.png <- downloadHandler(
-    filename = function() { paste("UMAPClusterPlot", ".png", sep='') },
-    content = function(file) {
-      ggsave(file, plot = umapclusplotoutput(), device = "png",width = 20, height = 20, units = "cm")
-    }
   )
   
   output$tsnedata.csv <- downloadHandler(
     filename = function(){"tsnedata.csv"},
     content = function(fname){
       write.csv(dataWithtSNEClusters(), fname,row.names = FALSE)
-    }
-  )
-  
-  output$tsneplot.png <- downloadHandler(
-    filename = function() { paste("tSNEPlot", ".png", sep='') },
-    content = function(file) {
-      ggsave(file, plot = tsneplotoutput(), device = "png",width = 20, height = 20, units = "cm")
-    }
-  )
-  
-  output$tsneclusplot.png <- downloadHandler(
-    filename = function() { paste("tSNEClusterPlot", ".png", sep='') },
-    content = function(file) {
-      ggsave(file, plot = tsneclusplotoutput(), device = "png",width = 20, height = 20, units = "cm")
     }
   )
   

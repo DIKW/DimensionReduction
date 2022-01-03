@@ -8,6 +8,8 @@ library(umap)
 library(Rtsne)
 library(DT)
 
+library(plotly)
+
 
 rdata <- c('iris','biopsy','Melanoma','Pima.te','Boston','diamonds','muscle','mtcars')
 
@@ -24,23 +26,27 @@ umapmetric <- c("euclidean","manhattan")
 kmeansalg <- c("Hartigan-Wong","Lloyd","Forgy","MacQueen")
 
 
-dbHeader <- dashboardHeader(title = "Dimension Reduction with UMAP & t-SNE",
-                            titleWidth = 500,
-                            tags$li(a(href = 'http://shinyapps.company.com',
+dbHeader <- dashboardHeader(title = "Dimension Reduction",
+                            titleWidth = 250,
+                            tags$li(a(href = 'https://dikw.shinyapps.io/DimensionReduction/',
                                       icon("power-off"),
                                       title = "Back to Apps Home"),
                                     class = "dropdown"),
-                            tags$li(a(href = 'http://www.atamaianalytics.com',
-                                      img(src = 'AtamaiAnalytics.jpeg',
+                            tags$li(a(href = 'http://www.dikw.com',
+                                      img(src = 'dikw-book-logo.png',
                                           title = "Company Home", height = "30px"),
                                       style = "padding-top:10px; padding-bottom:10px;"),
                                     class = "dropdown"))
 
-ui <- dashboardPage(skin="green",
+ui <- dashboardPage(skin="blue",
   dbHeader,
   dashboardSidebar(width=225,
                    sidebarMenu(
-                     menuItem("Data Selection & Processing", tabName = "process", icon = icon("table")),
+                     fileInput('fileUpload', 'Select File'),
+                     br(),
+                     menuItem("Data Processing", tabName = "process", icon = icon("table")),
+                     br(),
+                     menuItem("Benchmark-animation", tabName = "benchmark-animation", icon = icon("chart-bar")),
                      br(),
                      menuItem("UMAP", tabName = "umap", icon = icon("chart-bar")),
                      br(),
@@ -48,6 +54,33 @@ ui <- dashboardPage(skin="green",
                    )
   ),
   dashboardBody(
+    # hk custom to have box height
+    tags$head(tags$script('
+      // Define function to set height of "map" and "map_container"
+      setHeight = function() {
+        var window_height = $(window).height();
+        var header_height = $(".main-header").height();
+
+        var boxHeight = window_height - header_height - 100;
+
+        $("#umap_container").height(boxHeight);
+        $("#umap_plot").height(boxHeight - 20);
+        
+        $("#animate_container").height(boxHeight);
+        $("#animate_plot").height(boxHeight - 20);
+        
+      };
+
+      // Set input$box_height when the connection is established
+      $(document).on("shiny:connected", function(event) {
+        setHeight();
+      });
+
+      // Refresh the box height on every window resize event    
+      $(window).on("resize", function(){
+        setHeight();
+      });
+    ')),
     tabItems(
       tabItem(tabName = "process",
             tags$style(type="text/css",
@@ -56,27 +89,11 @@ ui <- dashboardPage(skin="green",
             ),
             
            fluidRow(   
-              box(title="Data Selection",background = "green",solidHeader = TRUE,width = 4,
-                  fluidRow(
-                    column(12,fileInput('fileUpload', 'Select File'))
-                  ),
-                  fluidRow(
-                  column(12,
-                         h4("-- or --",style="font-weight:bold")
-                         )
-                  ),
-                  fluidRow(
-                  column(12,
-                         checkboxInput("useRdata", "Use data selection from MASS and ggplot2 packages", FALSE)
-                         )),
-                  fluidRow(
-                  column(6,
-                         selectInput("rdata", "",rdata,selected="")
-                         )),
+              box(title="Data Selection",background = "light-blue",solidHeader = TRUE,width = 4,
                   hr(),
                   fluidRow(
-                  column(6,
-                         verbatimTextOutput("nrow")
+                  column(12,
+                         textOutput("nrowFiledata")
                          )),
                   fluidRow(
                   column(12,
@@ -87,51 +104,60 @@ ui <- dashboardPage(skin="green",
                            checkboxInput("limitcheck", "Limit observations", FALSE)
                            )),
                   fluidRow(
-                    column(3,
+                    column(6,
                            numericInput("limitnum", "",2000, min = 1, max = 5000)
                   )),
-                  hr()
+                  hr(),
+                  # filter
+                  h5("Filter"),
+                  fluidRow(
+                    column(8,selectizeInput("filterVars", "Select Filter Variable", choices = NULL, multiple = FALSE))
+                  ),
+                  fluidRow(
+                    column(8,selectizeInput("filterLevels", "Filter", choices = NULL, multiple = TRUE))
+                  ),
+                  fluidRow(
+                    column(12,
+                           textOutput("nrowDataset")
+                    ))
                 ),
-              box(title="Dimensions",background = "green",solidHeader = TRUE,width = 4,
+              box(title="Variables to use",background = "light-blue",solidHeader = TRUE,width = 4,
                 fluidRow(
-                column(12,selectizeInput("samplexvars", "Dimension Selection", choices = NULL, multiple = TRUE))
+                column(12,selectizeInput("samplexvars", "Select (numerical) variables for dimension reduction", choices = NULL, multiple = TRUE))
                 ),
                 fluidRow(
-                column(6,selectizeInput("sampleyvars", "Add Data Class", choices = NULL, multiple = FALSE))
+                column(12,selectizeInput("sampleyvars", "Select variables for additional decoration", choices = NULL, multiple = TRUE))
                 ),
                 fluidRow(
                 column(6,checkboxInput("classnum", "Treat numeric class as factor", FALSE))
                 ),
                 hr(),
                 fluidRow(
-                  column(6,selectInput("dview", "Data set to view",dataview,selected="Pre-processed Dataset"))
+                  column(12,selectInput("dview", "Pre-view data set",dataview,selected="Pre-processed Dataset"))
                 ),
                 br(),
                 fluidRow(
-                  column(4,downloadButton('dataview.csv', 'Download Data View',style = "color: black;background-color: #35e51d"))
+                  column(4,downloadButton('dataview.csv', 'Download Data View',style = "color: white;background-color: navy"))
                 )
-                
-                ),
-              box(title="Data Processing",background = "green",solidHeader = TRUE,width = 4,
+              ),
+              box(title="Pre Processing",background = "light-blue",solidHeader = TRUE,width = 4,
                 fluidRow(
-                  column(8,verbatimTextOutput("renderprint")),
-                  column(4,selectInput("impute","Missing Values",impute,selected="None"))
-                  
+                  column(6,selectInput("impute","How to handle Missing Values",impute,selected="None"))
                 ),
                 fluidRow(
-                  column(12,h5("After nemoving NA's or imputing values select the Dimensions again. Missing values can only be removed or imputed once. To remove or impute again, set to None and re-load the data."))
+                  column(12,tableOutput("renderNA"))
                 ),
-                hr(),
                 fluidRow(
-                  column(4,selectInput("fun", "Apply a Function",fun,selected="None")),
-                  column(6,selectInput("scale", "Scale Data",scale,selected="None"))
+                  column(12,h5("After removing NA's or imputing values consider to scale the data."))
                 ),
                 hr(),
                 fluidRow(
-                  column(4,checkboxInput("appround", "Apply rounding", FALSE))
+                  column(12,selectInput("scale", "Scale Data",scale,selected="None"))
                 ),
+                hr(),
                 fluidRow(
-                  column(2,numericInput("round","",1,min = 0,max = 10))
+                  column(4,checkboxInput("appround", "Apply rounding", FALSE)),
+                  column(3,numericInput("round","",3,min = 0,max = 5))
                 )
               )
                 ),
@@ -141,118 +167,118 @@ ui <- dashboardPage(skin="green",
              )
            )
       ),
+      tabItem(tabName = "benchmark-animation",
+              tags$style(type="text/css",
+                         ".shiny-output-error { visibility: hidden; }",
+                         ".shiny-output-error:before { visibility: hidden; }"
+              ),
+              fluidRow(
+                column(2,
+                       fluidRow(
+                         box(id='anime', title = 'Animation', background = "purple",solidHeader = TRUE, width = 12,
+                             fluidRow(
+                               column(6,actionButton("animate", "Start animation",style = "color: white;background-color: #D35400"))
+                             ),
+                             fluidRow(
+                               column(12,h5('Selecteer hieronder de woning corporaties die je wilt volgen in de animatie en start de animatie.'))
+                             ),
+                             fluidRow(
+                               column(12,selectizeInput("tofollow", "Follow", choices = NULL, multiple = TRUE))
+                             ),
+                             hr()
+                         )
+                       )
+                ) , # end column
+                column(10,
+                       box(id='animate_container',background = "purple",solidHeader = TRUE, title = 'plot', width=12,
+                           fluidRow(
+                             plotOutput("animate_plot", width="100%", height="100%") %>% withSpinner(type=4,color="#D35400")
+                           )
+                       )
+                ) # end column
+              )
+      ),
+                    
       tabItem(tabName = "umap",
               tags$style(type="text/css",
                          ".shiny-output-error { visibility: hidden; }",
                          ".shiny-output-error:before { visibility: hidden; }"
               ),
             fluidRow(
-               box(background = "green",solidHeader = TRUE,width = 3,
-                   h4("UMAP Parameters"),
-                   br(),
+              column(2,
+                    fluidRow(
+                         box(id='dim_reduction', title = 'Dimension Reduction', background = "purple",solidHeader = TRUE, width = 12,
+                             fluidRow(
+                               column(6,actionButton("umapseed", "Generate Plots",style = "color: white;background-color: #D35400"))
+                               ),
+                            fluidRow(
+                             column(12,h5('Select "Generate Plots" again to run with varying parameters and either a random or set seed'))
+                            ),
+                            fluidRow(
+                              column(12,checkboxInput("showlegend", "Show Legend", FALSE))
+                            ),
+                            fluidRow(
+                              column(12,selectizeInput("umapsize", "Size", choices = NULL, multiple = FALSE))
+                            ),
+                            fluidRow(
+                              column(12,selectizeInput("umapcolor", "Color", choices = NULL, multiple = FALSE))
+                            ),
+                            hr(),
+                           h4("Downloads"),
+                           br(),
+                           fluidRow(
+                           column(6,downloadButton('umapdata.csv', 'Data Grid',style = "color: black;background-color: #35e51d"))
+                           )
+                         )
+                    ),
+                    fluidRow(
+                      box(id='parameters', title = 'UMAP parameters', background = "purple", solidHeader = FALSE, collapsible = TRUE, collapsed=T,  width = 12,
+                          #h4("UMAP Parameters"),
+                          #br(),
+                          fluidRow(
+                            column(6,numericInput("n_neighbors", "Nearest Neighbours", 15, min = 2, max = 100)),
+                            column(6,numericInput("bandwidth", "Bandwidth", 1, min = 1, max = 10))
+                          ),
+                          fluidRow(
+                            column(6,selectInput("umapmetric", "Metric",umapmetric,selected="euclidian")),
+                            column(6,numericInput("alpha", "Alpha", 1, min = 1, max = 10))
+                          ),
+                          fluidRow(
+                            column(6,numericInput("n_epochs", "Epochs", 200, min = 2, max = 1000)),
+                            column(6,numericInput("gamma", "Gamma", 1, min = 1, max = 10))
+                          ),
+                          fluidRow(
+                            column(6,numericInput("min_dist", "Min. Distance", 0.1, min = 0.01, max = 10)),
+                            column(6,numericInput("negative_sample_rate", "Negative Sample Rate", 5, min = 1, max = 10))
+                          ),
+                          fluidRow(
+                            column(6,numericInput("set_op_mix_ratio", "Set op mix ratio", 1, min = 0, max = 1)),
+                            column(6,numericInput("spread", "Spread", 1, min = 1, max = 10))
+                          ),
+                          fluidRow(
+                            column(6,numericInput("local_connectivity", "Local Connectivity", 1, min = 1, max = 10)),
+                            column(6,numericInput("knn_repeats", "KNN Repeats", 1, min = 1, max = 10))
+                          ),
+                          hr(),
+                          h4("Seeding"),
+                          fluidRow(
+                            column(8,textOutput("printuseed"))
+                          ),
+                          checkboxInput("seed", "Set Seed", FALSE),
+                          fluidRow(
+                            column(6,numericInput("useedset", "Seed",1234, min = 1000, max = 9999))
+                          )
+                      )
+                    )
+               ) , # end column
+              column(10,
+               box(id='umap_container',background = "purple",solidHeader = TRUE, title = 'plot', width=12,
                    fluidRow(
-                     column(6,numericInput("n_neighbors", "Nearest Neighbours", 15, min = 2, max = 100)),
-                     column(6,numericInput("bandwidth", "Bandwidth", 1, min = 1, max = 10))
-                   ),
-                   fluidRow(
-                     column(6,selectInput("umapmetric", "Metric",umapmetric,selected="euclidian")),
-                     column(6,numericInput("alpha", "Alpha", 1, min = 1, max = 10))
-                   ),
-                   fluidRow(
-                     column(6,numericInput("n_epochs", "Epochs", 200, min = 2, max = 1000)),
-                     column(6,numericInput("gamma", "Gamma", 1, min = 1, max = 10))
-                   ),
-                   fluidRow(
-                     column(6,numericInput("min_dist", "Min. Distance", 0.1, min = 0.01, max = 10)),
-                     column(6,numericInput("negative_sample_rate", "Negative Sample Rate", 5, min = 1, max = 10))
-                   ),
-                   fluidRow(
-                     column(6,numericInput("set_op_mix_ratio", "Set op mix ratio", 1, min = 0, max = 1)),
-                     column(6,numericInput("spread", "Spread", 1, min = 1, max = 10))
-                   ),
-                   fluidRow(
-                     column(6,numericInput("local_connectivity", "Local Connectivity", 1, min = 1, max = 10)),
-                     column(6,numericInput("knn_repeats", "KNN Repeats", 1, min = 1, max = 10))
-                   ),
-                   hr(),
-                   h4("KMeans Parameters"),
-                   br(),
-                   fluidRow(
-                     column(6,numericInput("n_clusters", "Number of Clusters",2,min = 1, max = 100)),
-                     column(6,numericInput("iter_max", "Max. Iterations", 10, min = 1, max = 100))
-                   ),
-                   fluidRow(
-                     column(6,numericInput("nstart", "Random Sets", 1, min = 1, max = 10)),
-                     column(6,selectInput("kmeansalg","Algorithm",kmeansalg,selected="Hartigan-Wong"))
+                         plotlyOutput("umap_plot", width="100%", height="100%") %>% withSpinner(type=4,color="#D35400")
+                   )
                )
+              ) # end column
                ),
-               box(background = "green",solidHeader = TRUE,width = 2,
-                  h4("Plotting"),
-                   br(),
-                  fluidRow(
-                   column(6,actionButton("umapseed", "Generate Plots",style = "color: white;background-color: #D35400"))
-                   ),
-                  fluidRow(
-                   column(12,h5('Select "Generate Plots" again to run with varying parameters and either a random or set seed'))
-                  ),
-                  hr(),
-                  h4("Seeding"),
-                  fluidRow(
-                   column(8,verbatimTextOutput("printuseed"))
-                  ),
-                   checkboxInput("seed", "Set Seed", FALSE),
-                  fluidRow(
-                   column(6,numericInput("useedset", "Seed",1234, min = 1000, max = 9999))
-                  ),
-                 hr(),
-                 h4("Downloads"),
-                 br(),
-                 fluidRow(
-                 column(6,downloadButton('umapdata.csv', 'Data Grid',style = "color: black;background-color: #35e51d"))
-                 ),
-                 br(),
-                 fluidRow(
-                 column(6,downloadButton('umapplot.png', 'UMAP Plot',style = "color: black;background-color: #35e51d"))
-                 ),
-                 br(),
-                 fluidRow(
-                 column(6,downloadButton('umapclusplot.png','Cluster Plot',style = "color: black;background-color: #35e51d"))
-               )
-                 
-               ),
-               box(width = 5,
-                   fluidRow(
-                     box(background = "green",solidHeader = TRUE,width = 12,
-                         plotOutput("umapplot") %>% withSpinner(type=4,color="#D35400")
-                     )),
-                   fluidRow(
-                     box(background = "green",solidHeader = TRUE,width = 12,
-                         plotOutput("umapcluster") %>% withSpinner(type=4,color="#D35400")
-                     ))
-               ),
-               box(background = "green",solidHeader = TRUE,width = 2,
-                   h4("Chart Parameters"),
-                   br(),
-                   checkboxInput("uxaxisbounds", "Set X axis boundaries", FALSE),
-                   fluidRow(
-                     column(6,numericInput("uxmin", "Min. X",0,min = -2000, max = 2000)),
-                     column(6,numericInput("uxmax", "Max. X",0, min = -2000, max = 2000))
-                   ),
-                   checkboxInput("uyaxisbounds", "Set Y axis boundaries", FALSE),
-                   fluidRow(
-                     column(6,numericInput("uymin", "Min. Y",0,min = -2000, max = 2000)),
-                     column(6,numericInput("uymax", "Max. Y",0, min = -2000, max = 2000))
-                   ),
-                   hr(),
-                   checkboxInput("umapcluslabels", "Display Cluster Labels", TRUE),
-                   hr(),
-                   textInput("custmumaptitle", "UMAP Custom Title", "Add a custom title here"),
-                   checkboxInput("custmumaptitlecheck", "Display UMAP Custom Title", FALSE),
-                   br(),
-                   textInput("custmumapclustitle", "KMeans Cluster Custom Title", "Add a custom title here"),
-                   checkboxInput("custmumapclustitlecheck", "Display KMeans Custom Title", FALSE)
-                
-               )),
             fluidRow(
              box(width = 12,
                  DT::dataTableOutput('umap')
