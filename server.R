@@ -14,7 +14,8 @@ library(umap)
 library(Rtsne)
 library(irlba)
 
-library(gganimate)
+#library(gganimate)
+library(ggrepel)
 
 
 
@@ -105,7 +106,6 @@ server <- function(input,output,session) {
     updateSelectizeInput(session, "umapsize", "Size", choices = c('default',vars)) # selected = "None"
   })
 
-  
   # select variable for umap plot color  
   observe({
     class <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
@@ -114,6 +114,13 @@ server <- function(input,output,session) {
     updateSelectizeInput(session, "umapcolor", "Color", choices = c('default',vars)) # selected = "None"
   })
   
+  # select variable for umap plot label  
+  observe({
+    class <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
+    vars <- colnames(class)
+    #varY <- varY[!(varY %in% input$samplexvars)]
+    updateSelectizeInput(session, "umaplabel", "Label", choices = c('None',vars)) # selected = "None"
+  })
   # select wocos to follow  
   observe({
     df <- filtered_data_set()
@@ -232,7 +239,7 @@ server <- function(input,output,session) {
   })
 
   
-  seedrandumap <- eventReactive(input$umapseed,{
+  seedrandumap <- reactive({
     if(input$seed=="FALSE") {
       s <- as.integer(runif(1, min = 1000, max = 9999))
     } else if(input$seed=="TRUE") {
@@ -250,20 +257,19 @@ server <- function(input,output,session) {
     }
   })
   
+  # listen to action buttons
+  toListen <- reactive({
+    list(input$umapseed,input$animate)
+  })
+  
 ############### UMAP ##################################
   
 
  
-  umap_class_df <- eventReactive({
-    input$umapseed
-    input$animate
-    1
-  },{
-    message('start data processing')
-    df_input <- filedata()
+  umap_df <- reactive({ # eventReactive(toListen(),
+    message('start build data')
     df <- data_set()
     seedrand <- as.integer(seedrandumap())
-    
     
     custom.settings = umap.defaults
     custom.settings$n_neighbors=input$n_neighbors
@@ -289,14 +295,20 @@ server <- function(input,output,session) {
     custom.settings$umap_learn_args=NA
     
     df_umap <- umap(df,config=custom.settings)
+    df_umap
+  })
+  
+  umap_class_df <- reactive({
+    df <- umap_df()
+    df_input <- filedata()
     
     if(is.null(input$sampleyvars)) {
       #class <- class %>% mutate(class="None") %>% dplyr::select(class)
-      df_umap_class <- data.frame(df_umap$layout)
+      df_umap_class <- data.frame(df$layout)
       names(df_umap_class) <- c("x", "y")
     } else {
       classvars <- filtered_data_set() %>% dplyr::select(input$sampleyvars)
-      df_umap_class <- data.frame(cbind(df_umap$layout,classvars))
+      df_umap_class <- data.frame(cbind(df$layout,classvars))
       names(df_umap_class) <- c("x", "y",input$sampleyvars)
     }
     
@@ -306,6 +318,7 @@ server <- function(input,output,session) {
   
   ### umap plot
   output$umap_plot = renderPlotly({
+    input$umapseed
     df_umap_class <- umap_class_df()
   
     n <- nrow(df_umap_class)
@@ -313,25 +326,32 @@ server <- function(input,output,session) {
     # set color
     if(input$umapcolor=="default"){
       df_umap_class$color <- 'blue'
-      umapcolor='color'
     } else {
-      umapcolor=input$umapcolor
+      df_umap_class$color = as.factor(df_umap_class[[input$umapcolor]])
     }
     
     # set size
     if(input$umapsize=="default"){
       df_umap_class$size <- 1
-      umapsize='size'
     } else {
-      umapsize=input$umapsize
+      df_umap_class$size = as.numeric(df_umap_class[[input$umapsize]]) %>% replace(is.na(.), 0)
+    }
+    
+    # set label
+    if(input$umaplabel=="None"){
+      df_umap_class$label <- 'No label'
+    } else {
+      df_umap_class$label <- df_umap_class[[input$umaplabel]]
     }
 
     umap_plot <- NULL
-    
-    umap_plot <- ggplot(df_umap_class, aes(x, y)) + 
-      geom_point(aes_string(colour = umapcolor,
-                     size = umapsize, alpha=0.6)) +
-      scale_size(name=umapsize) + #range = c(.1, 24),
+
+    umap_plot <- ggplot(df_umap_class, aes(x = x, y = y, 
+                                                  label = label)) + 
+      geom_point(color = df_umap_class$color,
+                 aes(size = df_umap_class$size),
+                 alpha = 0.5) +
+      scale_size() +
       labs(title = "UMAP Dimension Reduction",
            x = 'X',
            y = 'Y',
@@ -350,33 +370,44 @@ server <- function(input,output,session) {
               legend.direction = "vertical")
     }
 
-    return(ggplotly(umap_plot))
+    return(ggplotly(umap_plot,tooltip = c("label")))
   }
   )
 
   ### animate plot
   output$animate_plot = renderPlot({
-    df <- umap_class_df()
-    message('start making plot')
-    n <- nrow(df)
+    input$animate
+    df_all <- umap_class_df()
+    message('start animation')
+    n <- nrow(df_all)
     
-    if ("jaar" %in% colnames(df)) {
-    
-    aplot <- ggplot(df, 
-                aes(x=x, y=y, colour=corporatie)) +
-      geom_text(data = df,aes(x=0,y=0, label=as.character(jaar)), size=50, colour='white',show.legend = FALSE) +
-      geom_point(show.legend = FALSE, alpha= 0.7)  +
-      geom_label(data = subset(df,corporatie %in% input$tofollow),
-                 aes(label=corporatie),
-                 show.legend = FALSE) + 
-      labs(title = "AEDES Benchmark 2018 - 2021",
-           subtitle = "UMAP embedding van geselecteerde Benchmark detail informatie in 2D",
-           caption = "powered by DIKW Academy") +
-      transition_states(jaar, transition_length = 4, state_length=1, wrap=FALSE) 
-
-    
-    return(aplot)
+    if ("jaar" %in% colnames(df_all)) {
+      
+      df <- df_all %>% filter(jaar == input$time)  
+      
+      # make relevant labels
+      df <- df %>% mutate(follow = if_else(corporatie %in% input$tofollow,corporatie,'')) 
+      
+      aplot <- ggplot(df, 
+                  aes(x=x, y=y, label = follow)) +
+        geom_text(data = df,aes(x=0,y=0, label=as.character(jaar)), size=50, colour='white',show.legend = FALSE) +
+        geom_point(data = df[df$follow == "",],alpha= 0.7, color = 'grey50')  +
+        geom_text_repel(data = df,aes(color=corporatie),box.padding = 1,
+                        point.padding = 1,
+                        min.segment.length = 0, # draw all line segments
+                        max.overlaps = Inf
+        )  +
+        geom_point(data = df[df$follow != "",], color = 'red')  +
+        theme(legend.position="none") + 
+        labs(title = "AEDES Benchmark 2018 - 2021",
+             subtitle = "UMAP embedding van geselecteerde Benchmark detail informatie in 2D",
+             caption = "powered by DIKW Academy") 
+        #transition_states(jaar, transition_length = 4, state_length=1, wrap=FALSE) 
+  
+      
+      return(aplot)
     } else {
+      message('no jaar in dataset, nothing todo')
       return()
     }
     

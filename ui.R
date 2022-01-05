@@ -61,14 +61,14 @@ ui <- dashboardPage(skin="blue",
         var window_height = $(window).height();
         var header_height = $(".main-header").height();
 
-        var boxHeight = window_height - header_height - 100;
+        var boxHeight = window_height - header_height - 140;
 
         $("#umap_container").height(boxHeight);
-        $("#umap_plot").height(boxHeight - 20);
-        
+        $("#umap_plot").height(boxHeight - 25);
+
         $("#animate_container").height(boxHeight);
-        $("#animate_plot").height(boxHeight - 20);
-        
+        $("#animate_plot").height(boxHeight - 75);
+
       };
 
       // Set input$box_height when the connection is established
@@ -76,7 +76,7 @@ ui <- dashboardPage(skin="blue",
         setHeight();
       });
 
-      // Refresh the box height on every window resize event    
+      // Refresh the box height on every window resize event
       $(window).on("resize", function(){
         setHeight();
       });
@@ -175,7 +175,7 @@ ui <- dashboardPage(skin="blue",
               fluidRow(
                 column(2,
                        fluidRow(
-                         box(id='anime', title = 'Animation', background = "purple",solidHeader = TRUE, width = 12,
+                         box(id='anime', title = 'Settings', background = "purple",solidHeader = TRUE, width = 12,
                              fluidRow(
                                column(6,actionButton("animate", "Start animation",style = "color: white;background-color: #D35400"))
                              ),
@@ -190,9 +190,14 @@ ui <- dashboardPage(skin="blue",
                        )
                 ) , # end column
                 column(10,
-                       box(id='animate_container',background = "purple",solidHeader = TRUE, title = 'plot', width=12,
-                           fluidRow(
-                             plotOutput("animate_plot", width="100%", height="100%") %>% withSpinner(type=4,color="#D35400")
+                       box(id='bb',background = "purple",solidHeader = TRUE, title = 'Animation', width=12,
+                           box(id='animate_container',background = "purple", width=12,
+                             fluidRow(
+                               sliderInput("time", "Time line", min = 2018, max = 2021, value = 2018, step = 1, animate = animationOptions(interval = 3000), ticks = FALSE, width = '100%'),
+                             ),
+                             fluidRow(
+                               plotOutput("animate_plot", width="100%", height="100%") %>% withSpinner(type=4,color="#D35400")
+                             )
                            )
                        )
                 ) # end column
@@ -222,6 +227,9 @@ ui <- dashboardPage(skin="blue",
                             ),
                             fluidRow(
                               column(12,selectizeInput("umapcolor", "Color", choices = NULL, multiple = FALSE))
+                            ),
+                            fluidRow(
+                              column(12,selectizeInput("umaplabel", "Label", choices = NULL, multiple = FALSE))
                             ),
                             hr(),
                            h4("Downloads"),
